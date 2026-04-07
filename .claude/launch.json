@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "Next.js Dev",
-      "runtimeExecutable": "/bin/sh",
-      "runtimeArgs": ["-c", "cd '/Users/bennettlombardo/Desktop/Claude Code/dj-set-planner-web' && /opt/homebrew/bin/node node_modules/.bin/next dev"],
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["/Users/bennettlombardo/Desktop/Claude Code/dj-set-planner-web/dev.sh"],
       "port": 3000
     }
   ]
