@@ -12,7 +12,8 @@ export default function LibraryLayout({ children }: { children: React.ReactNode 
             <p className="text-xs text-zinc-500 mt-0.5">powered by Claude</p>
           </div>
           <nav className="flex gap-6 text-sm text-zinc-400">
-            <Link href="/" className="hover:text-zinc-100 transition-colors">Sets</Link>
+            <Link href="/" className="hover:text-zinc-100 transition-colors">Plan a Set</Link>
+            <Link href="/sets" className="hover:text-zinc-100 transition-colors">Sets</Link>
             <Link href="/library" className="text-zinc-100">Library</Link>
           </nav>
         </div>
