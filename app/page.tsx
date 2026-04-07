@@ -62,6 +62,7 @@ export default function PlanPage() {
   const [generating, setGenerating] = useState(false)
   const [streamedText, setStreamedText] = useState('')
   const [parsedSet, setParsedSet] = useState<object | null>(null)
+  const [savedSetId, setSavedSetId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Check if library exists on mount
@@ -103,6 +104,7 @@ export default function PlanPage() {
     setGenerating(true)
     setStreamedText('')
     setParsedSet(null)
+    setSavedSetId(null)
     setStep('generating')
 
     try {
@@ -126,15 +128,19 @@ export default function PlanPage() {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        const chunk = decoder.decode(value, { stream: true })
-        full += chunk
-        setStreamedText(full)
+        full += decoder.decode(value, { stream: true })
+        // Show text without the sentinel marker
+        setStreamedText(full.replace(/\n\n__SAVED_SET_ID__:[a-z0-9-]+$/, ''))
       }
+
+      // Extract sentinel
+      const sentinelMatch = full.match(/__SAVED_SET_ID__:([a-z0-9-]+)/)
+      if (sentinelMatch) setSavedSetId(sentinelMatch[1])
 
       const parsed = extractJSON(full)
       setParsedSet(parsed)
       setStep('result')
-    } catch (err) {
+    } catch {
       setStreamedText('Network error — please try again.')
       setStep('result')
     } finally {
@@ -567,10 +573,10 @@ export default function PlanPage() {
                 ← Adjust & Regenerate
               </button>
               <Link
-                href="/sets"
+                href={savedSetId ? `/sets/${savedSetId}` : '/sets'}
                 className="text-xs px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg transition-colors"
               >
-                View in Sets →
+                {savedSetId ? 'View Full Set →' : 'View Sets →'}
               </Link>
             </div>
           </div>

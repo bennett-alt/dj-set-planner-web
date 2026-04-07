@@ -9,7 +9,7 @@ const supabase = createClient(
 
 const SYSTEM_PROMPT = `You are an expert DJ set planner. Your job is to build a coherent, well-paced set from a DJ's track library based on their show requirements.
 
-Track format: [rekordbox_id|title|artist|BPM|key|genre|duration_secs|★rating|comments]
+Track format: [supabase_uuid|title|artist|BPM|key|genre|duration_secs|★rating|comments]
 
 Guidelines:
 - Match the requested set duration (assume ~4 min avg effective play time per track)
@@ -17,10 +17,9 @@ Guidelines:
 - Consider harmonic mixing: prefer adjacent or matching Camelot wheel keys where possible
 - Avoid playing the same artist back-to-back unless intentional
 - Honor any must-include tracks — place them strategically based on energy level
-- Avoid any tracks listed to skip
 - Write a brief transition note for each track explaining why it follows the previous one
 
-After any clarifying questions (limit: 1 round), output your final set as a JSON code block:
+Output your final set as a JSON code block with NO clarifying questions first:
 
 \`\`\`json
 {
@@ -29,7 +28,7 @@ After any clarifying questions (limit: 1 round), output your final set as a JSON
   "tracks": [
     {
       "position": 1,
-      "track_id": "...",
+      "track_id": "the-supabase-uuid-from-the-track-format",
       "title": "...",
       "artist": "...",
       "bpm": 128.0,
@@ -41,7 +40,8 @@ After any clarifying questions (limit: 1 round), output your final set as a JSON
 }
 \`\`\`
 
-energy_level must be one of: "low", "medium", "high"`
+energy_level must be one of: "low", "medium", "high"
+IMPORTANT: track_id must be the exact UUID from the first field of the track format, not the rekordbox ID.`
 
 interface SessionContext {
   event_name: string
@@ -57,7 +57,6 @@ interface SessionContext {
 
 interface TrackRow {
   id: string
-  rekordbox_id: number | null
   title: string
   artist: string
   bpm: number | null
@@ -85,7 +84,7 @@ function scoreTrack(track: TrackRow, bpmTarget: number): number {
     const bpmDiff = Math.abs(track.bpm - bpmTarget)
     score += Math.max(0, 15 - bpmDiff)
   }
-  if (track.energy != null) score += 5 // bonus for analyzed tracks
+  if (track.energy != null) score += 5
   return score
 }
 
@@ -94,35 +93,90 @@ function toClaudeStr(track: TrackRow): string {
   return `[${track.id}|${track.title}|${track.artist}|${track.bpm?.toFixed(0) ?? '?'}BPM|${track.key ?? '?'}|${track.genre ?? ''}|${dur}|★${track.rating}|${track.comments ?? ''}]`
 }
 
+function extractJSON(text: string): object | null {
+  const match = text.match(/```json\s*([\s\S]*?)```/)
+  if (!match) return null
+  try {
+    return JSON.parse(match[1].trim())
+  } catch {
+    return null
+  }
+}
+
+async function saveSet(setData: any, ctx: SessionContext): Promise<string | null> {
+  try {
+    const { data: setRow, error } = await supabase
+      .from('sets')
+      .insert({
+        title: setData.set_title || ctx.event_name || 'Untitled Set',
+        set_notes: setData.set_notes || null,
+        event_name: ctx.event_name || null,
+        venue: ctx.venue || null,
+        set_duration_minutes: ctx.set_duration_minutes,
+        time_slot: ctx.time_slot,
+        audience_description: ctx.audience_description || null,
+        energy_arc: ctx.energy_arc || null,
+        vibe_description: ctx.vibe_description || null,
+      })
+      .select('id')
+      .single()
+
+    if (error || !setRow) {
+      console.error('Error saving set:', error)
+      return null
+    }
+
+    const setId = setRow.id
+
+    const setTracks = (setData.tracks || [])
+      .filter((t: any) => t.track_id)
+      .map((t: any) => ({
+        set_id: setId,
+        track_id: t.track_id,
+        position: t.position,
+        transition_note: t.transition_note || null,
+        energy_level: t.energy_level || 'medium',
+        bpm_played: t.bpm || null,
+      }))
+
+    if (setTracks.length > 0) {
+      const { error: tracksError } = await supabase.from('set_tracks').insert(setTracks)
+      if (tracksError) console.error('Error saving set_tracks:', tracksError)
+    }
+
+    return setId
+  } catch (err) {
+    console.error('saveSet exception:', err)
+    return null
+  }
+}
+
 export async function POST(req: NextRequest) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
-    return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), { status: 500 })
+    return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured on the server. Add it to Vercel environment variables.' }), { status: 500 })
   }
 
   const body = await req.json() as { context: SessionContext }
   const ctx = body.context
 
-  // Fetch tracks from Supabase
   const { data: allTracks } = await supabase
     .from('tracks')
-    .select('id, rekordbox_id, title, artist, bpm, key, genre, duration_seconds, rating, comments, energy')
+    .select('id, title, artist, bpm, key, genre, duration_seconds, rating, comments, energy')
     .order('rating', { ascending: false })
 
   if (!allTracks || allTracks.length === 0) {
     return new Response(JSON.stringify({ error: 'No tracks in library. Upload your Rekordbox XML first.' }), { status: 400 })
   }
 
-  // Prefilter: top 100 by score
   const bpmTarget = bpmTargetForSlot(ctx.time_slot)
-  const scored = (allTracks as TrackRow[])
+  const candidates = (allTracks as TrackRow[])
     .map(t => ({ track: t, score: scoreTrack(t, bpmTarget) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, 100)
     .map(x => x.track)
 
-  const trackList = scored.map(toClaudeStr).join('\n')
-
+  const trackList = candidates.map(toClaudeStr).join('\n')
   const estimatedTracks = Math.max(1, Math.round(ctx.set_duration_minutes / 4))
 
   const userMessage = `Here is my show:
@@ -134,7 +188,6 @@ export async function POST(req: NextRequest) {
 - Energy arc: ${ctx.energy_arc}
 - Vibe: ${ctx.vibe_description}
 ${ctx.must_include ? `- Must include: ${ctx.must_include}` : ''}
-${ctx.num_sets > 1 ? `- Please generate ${ctx.num_sets} distinct set options, each as its own JSON block.` : ''}
 
 Here are my top tracks (pre-filtered for your time slot):
 ${trackList}
@@ -145,6 +198,7 @@ Build me a complete set plan.`
 
   const stream = new ReadableStream({
     async start(controller) {
+      let fullText = ''
       try {
         const response = client.messages.stream({
           model: 'claude-opus-4-6',
@@ -154,11 +208,19 @@ Build me a complete set plan.`
         })
 
         for await (const chunk of response) {
-          if (
-            chunk.type === 'content_block_delta' &&
-            chunk.delta.type === 'text_delta'
-          ) {
+          if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+            fullText += chunk.delta.text
             controller.enqueue(new TextEncoder().encode(chunk.delta.text))
+          }
+        }
+
+        // Save to Supabase after streaming completes
+        const setData = extractJSON(fullText)
+        if (setData) {
+          const setId = await saveSet(setData, ctx)
+          if (setId) {
+            // Append sentinel so client can redirect to the saved set
+            controller.enqueue(new TextEncoder().encode(`\n\n__SAVED_SET_ID__:${setId}`))
           }
         }
       } catch (err) {
