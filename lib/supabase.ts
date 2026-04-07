@@ -41,7 +41,40 @@ export type Set = {
   audience_description: string | null
   energy_arc: string | null
   vibe_description: string | null
+  user_rating: number | null
+  selected: boolean
+  played: boolean
+  notes: string | null
+  recording_url: string | null
   created_at: string
+}
+
+export type UserTrackMetadata = {
+  id: string
+  track_id: string
+  favorite: boolean
+  rating: number | null
+  tags: string[] | null
+  role: 'opener' | 'peak' | 'closer' | null
+  usage_count: number
+  created_at: string
+  updated_at: string
+}
+
+export type Playlist = {
+  id: string
+  name: string
+  description: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type PlaylistTrack = {
+  id: string
+  playlist_id: string
+  track_id: string
+  position: number
+  added_at: string
 }
 
 export type SetTrack = {

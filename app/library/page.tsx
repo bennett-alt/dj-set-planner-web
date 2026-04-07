@@ -1,66 +1,73 @@
 import { supabase } from '@/lib/supabase'
-import type { Track } from '@/lib/supabase'
-import Link from 'next/link'
-import TrackLibrary from './TrackLibrary'
+import type { Track, UserTrackMetadata } from '@/lib/supabase'
+import TrackBrowser from './TrackBrowser'
 
-async function getTracks(): Promise<Track[]> {
-  const { data } = await supabase
-    .from('tracks')
-    .select('*')
-    .order('artist', { ascending: true })
-  return data || []
-}
+export type TrackWithMeta = Track & { metadata: UserTrackMetadata | null }
 
-async function getStats(tracks: Track[]) {
-  const analyzed = tracks.filter(t => t.energy != null).length
-  const genres = new Set(tracks.map(t => t.genre).filter(Boolean)).size
-  const rated = tracks.filter(t => t.rating > 0).length
-  return { total: tracks.length, analyzed, genres, rated }
+async function getTracksWithMeta(): Promise<{
+  tracks: TrackWithMeta[]
+  stats: {
+    total: number
+    analyzed: number
+    genres: number
+    favorites: number
+  }
+}> {
+  const [tracksRes, metaRes] = await Promise.all([
+    supabase.from('tracks').select('*').order('artist', { ascending: true }),
+    supabase.from('user_track_metadata').select('*'),
+  ])
+
+  const tracks: Track[] = tracksRes.data || []
+  const metaRows: UserTrackMetadata[] = metaRes.data || []
+
+  const metaMap = new Map<string, UserTrackMetadata>()
+  for (const row of metaRows) {
+    metaMap.set(row.track_id, row)
+  }
+
+  const tracksWithMeta: TrackWithMeta[] = tracks.map((t) => ({
+    ...t,
+    metadata: metaMap.get(t.id) ?? null,
+  }))
+
+  const analyzed = tracks.filter((t) => t.energy != null).length
+  const uniqueGenres = new Set(tracks.map((t) => t.genre).filter(Boolean)).size
+  const favorites = metaRows.filter((m) => m.favorite === true).length
+
+  return {
+    tracks: tracksWithMeta,
+    stats: {
+      total: tracks.length,
+      analyzed,
+      genres: uniqueGenres,
+      favorites,
+    },
+  }
 }
 
 export default async function LibraryPage() {
-  const tracks = await getTracks()
-  const stats = await getStats(tracks)
+  const { tracks, stats } = await getTracksWithMeta()
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans">
-      {/* Header */}
-      <header className="border-b border-zinc-800 px-6 py-4">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight">DJ Set Planner</h1>
-            <p className="text-xs text-zinc-500 mt-0.5">powered by Claude</p>
+    <main className="max-w-7xl mx-auto px-6 py-8">
+      {/* Stats row */}
+      <div className="grid grid-cols-4 gap-4 mb-8">
+        {[
+          { label: 'Total Tracks', value: stats.total.toLocaleString() },
+          { label: 'Analyzed', value: stats.analyzed.toLocaleString() },
+          { label: 'Genres', value: stats.genres.toLocaleString() },
+          { label: 'Favorites', value: stats.favorites.toLocaleString() },
+        ].map(({ label, value }) => (
+          <div key={label} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+            <p className="text-2xl font-semibold">{value}</p>
+            <p className="text-xs text-zinc-500 mt-1">{label}</p>
           </div>
-          <nav className="flex gap-6 text-sm text-zinc-400">
-            <Link href="/" className="hover:text-zinc-100 transition-colors">Sets</Link>
-            <Link href="/library" className="text-zinc-100">Library</Link>
-          </nav>
-        </div>
-      </header>
+        ))}
+      </div>
 
-      <main className="max-w-5xl mx-auto px-6 py-10">
-        <div className="mb-8">
-          <h2 className="text-xl font-semibold tracking-tight mb-1">Track Library</h2>
-          <p className="text-sm text-zinc-500">Your full Rekordbox collection, synced from the CLI.</p>
-        </div>
-
-        {/* Stats row */}
-        <div className="grid grid-cols-4 gap-4 mb-8">
-          {[
-            { label: 'Total Tracks', value: stats.total.toLocaleString() },
-            { label: 'Analyzed', value: `${stats.analyzed.toLocaleString()} / ${stats.total.toLocaleString()}` },
-            { label: 'Genres', value: stats.genres.toString() },
-            { label: 'Rated', value: stats.rated.toLocaleString() },
-          ].map(({ label, value }) => (
-            <div key={label} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
-              <p className="text-xl font-semibold">{value}</p>
-              <p className="text-xs text-zinc-500 mt-0.5">{label}</p>
-            </div>
-          ))}
-        </div>
-
-        <TrackLibrary tracks={tracks} />
-      </main>
-    </div>
+      {/* Track browser */}
+      <TrackBrowser tracks={tracks} />
+    </main>
   )
 }

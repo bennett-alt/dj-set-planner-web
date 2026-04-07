@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase'
 import type { Set, SetTrack, Track } from '@/lib/supabase'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import SetFeedback from './SetFeedback'
 
 async function getSet(id: string): Promise<Set | null> {
   const { data } = await supabase
@@ -123,6 +124,9 @@ export default async function SetDetailPage({ params }: { params: Promise<{ id: 
             <p className="text-sm text-zinc-500 mt-3">{set.set_notes}</p>
           )}
         </div>
+
+        {/* Post-show feedback */}
+        <SetFeedback set={set} />
 
         {/* Energy arc */}
         {setTracks.length > 0 && (
